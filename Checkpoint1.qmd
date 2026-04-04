@@ -2,6 +2,7 @@
 title: "Project 1 Checkpoint 1"
 author: "Ruben Jimenez"
 format: html
+embed-resources: true
 editor: visual
 ---
 
