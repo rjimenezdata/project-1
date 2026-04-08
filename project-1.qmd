@@ -69,7 +69,7 @@ df_cleanyear <- cases_year |>
          "Discard Rate Per Million" = discarded_non_measles_rubella_cases_per_100000_total_population)
 ```
 
-# Data Summary 1 -- Unmodified Data
+# Data Summary 1 -- Unmodified Data & Custom Function
 
 ```{r}
 library(stringi)
@@ -128,7 +128,7 @@ monthly_measles_summary(df_cleanmonths, "Algeria", 2012)
 monthly_measles_summary(df_cleanmonths, "United States of America", 2020)
 ```
 
-# Data Summary 2 -- Modified Data
+# Data Summary 2 -- Modified Data & Custom Function
 
 ```{r}
 yoy_change <- function(df, country_name) {
@@ -178,7 +178,7 @@ yoy_change <- function(df, country_name) {
 yoy_change(df_cleanyear, "United States of America")
 ```
 
-# Data Summary 3 -- Unmodified Data
+# Data Summary 3 -- Unmodified Data & Custom Function With Iteration
 
 ```{r}
 summ_stats <- function(x){
@@ -226,7 +226,7 @@ summ_df(df_cleanyear)
 
 ```
 
-# Data Summary 4 -- Modified Data
+# Data Summary 4 -- Modified Data & Custom Function With Iteration
 
 ```{r}
 # southern hemisphere countries in dataset (obtained through AI)
