@@ -208,7 +208,7 @@ summ_df <- function(df){
     pivot_wider(names_from = Variable) |>
       select(Summary, Country, Year, `Total Population`, `Suspected Measles and Rubella Cases`, `Measles Rate Per Million`) |>
       gt() |>
-    tab_header(title = md("**Data Frame Summary**")) |>
+    tab_header(title = "Data Frame Summary") |>
     cols_label(Summary = md("**Summary**"),
                Country = md("**Country**"),
                Year = md("**Year**"),
@@ -240,8 +240,8 @@ southern_hemisphere <- c(
   "Samoa", "Solomon Islands", "Tonga", "Tuvalu", "Vanuatu")
 
 # create season variable
-measles_seasons <- measles |>
-  mutate(Month = month(Date),
+measles_seasons <- df_cleanmonths |>
+  mutate(
          Season = case_when(
                   # southern hemisphere
                   Country %in% southern_hemisphere & Month %in% c(12, 1, 2)  ~ "Summer",
