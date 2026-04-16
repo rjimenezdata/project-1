@@ -1,0 +1,330 @@
+---
+title: "project-1-checkpoint2"
+author: "Ruben Jimenez"
+format: html
+editor: visual
+code-tools: true
+---
+
+## Data
+
+```{r}
+#| message: false
+
+# load packages
+library(tidytuesdayR)
+library(tidyverse)
+library(stringi)
+library(gt)
+
+# load data
+cases_month <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-06-24/cases_month.csv')
+
+cases_year <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-06-24/cases_year.csv')
+```
+
+## Data Cleaning
+
+```{r}
+# create measles data
+measles <- cases_month |>
+  select(-c(rubella_clinical, rubella_epi_linked, 
+            rubella_lab_confirmed, rubella_total)) |>
+  rename("Region" = region,
+         "Country" = country, 
+         "Country Code" = iso3,
+         "Year" = year,
+         "Month" = month,
+         "Suspected Measles" = measles_suspect,
+         "Clinical Measles" = measles_clinical,
+         "Epi Measles" = measles_epi_linked,
+         "Lab Measles" = measles_lab_confirmed,
+         "Total Measles" = measles_total,
+         "Discarded" = discarded) |>
+  mutate(Date = my(str_c(Month, "-", Year)),
+         ASCII = stri_trans_general(Country, "Latin-ASCII")) |>
+  select(-c(Year, Month)) |>
+  relocate(Date)
+```
+
+```{r}
+# create measles data for years
+measles_year <- cases_year |>
+  select(-c(rubella_clinical, rubella_epi_linked, 
+            rubella_lab_confirmed, rubella_total,
+            rubella_incidence_rate_per_1000000_total_population)) |>
+  rename("Region" = region,
+         "Country" = country, 
+         "Country Code" = iso3,
+         "Year" = year,
+         "Total Pop." = total_population,
+         "Annualized Pop. 2025" = annualized_population_most_recent_year_only,
+         "Total Suspected Cases" = total_suspected_measles_rubella_cases,
+         "Total Measles" = measles_total,
+         "Total Clinical Measles" = measles_clinical,
+         "Total Epi Measles" = measles_epi_linked,
+         "Total Lab Measles" = measles_lab_confirmed,
+         "Total Measles" = measles_total,
+         "Total Measles per Million" = measles_incidence_rate_per_1000000_total_population,
+         "Total Discarded" = discarded_cases,
+         "Total Discarded per Million" = discarded_non_measles_rubella_cases_per_100000_total_population) |>
+  mutate(ASCII = stri_trans_general(Country, "Latin-ASCII")) |>
+  slice(-1)
+
+# write.csv(measles_year, "measles_year.csv")
+```
+
+## Functions
+
+### **monthly_measles_summary()**
+
+**monthly_measles_summary():** when given the measles dataframe, country name and a given year, it outputs the total number of measles cases for each month of that year.
+
+**Note:** the country name can be spelled changing special characters (i.e. Turkiye)
+
+-   summary using existing columns produced with custom function
+
+```{r}
+monthly_measles_summary <- function(df, country_name, year_input) {
+  
+  # input checks
+  required_cols <- c("Date", "Country", "Total Measles", "ASCII")
+  if (!all(required_cols %in% names(df))) {
+    missing_cols <- required_cols[!required_cols %in% names(df)]
+    stop(paste("Missing required columns:", paste(missing_cols, 
+                                                  collapse = ", ")))}
+  
+  if (!is.character(country_name) || length(country_name) != 1) {
+    stop("Country Name must be a valid country.")}
+  
+  if (!is.numeric(year_input) || length(year_input) != 1) {
+    stop("Year input must be a valid year.")}
+  
+  # empty dataset
+  if (nrow(df) == 0) {
+    warning("No data found.")}
+  
+  # handle special chars
+  country_name_ascii <- stri_trans_general(country_name, "Latin-ASCII")
+  
+  # find the original country spelling from the dataset
+  original_name <- df |>
+    filter(ASCII == country_name_ascii) |>
+    pull(Country) |>
+    unique()
+  
+  # create summary table
+  df |>
+    mutate(Year = year(Date),
+           Month = month(Date, label = TRUE, abbr = FALSE)) |>
+    filter(ASCII == country_name_ascii,
+           Year == year_input) |>
+    group_by(Month) |>
+    summarise("Total Measles Cases" = sum(`Total Measles`, na.rm = TRUE),
+              .groups = "drop") |>
+    arrange(Month) |>
+    gt() |>
+    tab_header(title = md(paste0("Monthly Measles Cases in ", original_name, 
+                                " for the Year ", year_input))) |>
+    cols_label(Month = md("**Month**"),
+               "Total Measles Cases" = md("**Total Measles Cases**"))}
+```
+
+```{r}
+# test cases (using countries with special characters)
+monthly_measles_summary(measles, "Turkiye", 2012)
+monthly_measles_summary(measles, "Cote d'Ivoire", 2013)
+monthly_measles_summary(measles, "Chad", 2015)
+```
+
+### **yoy_change()**
+
+**yoy_change():** when given the measles dataframe and desired country name, it outputs the annual change in measles' cases rate.
+
+**Note:** the country name can be spelled changing special characters (i.e. Turkiye)
+
+-   summary using modified columns produced with custom function
+
+```{r}
+yoy_change <- function(df, country_name) {
+  
+  # input checks
+  required_cols <- c("Year", "Country", "Total Measles per Million", "ASCII")
+  
+  if (!all(required_cols %in% names(df))) {
+    missing_cols <- required_cols[!required_cols %in% names(df)]
+    stop(paste("Missing required columns:", paste(missing_cols, collapse = ", ")))}
+  
+  if (!is.character(country_name) || length(country_name) != 1) {
+    stop("Country Name must be a valid country.")}
+  
+  # empty dataset
+  if (nrow(df) == 0) {
+    warning("No data found.")}
+  
+  # handle special chars
+  country_name_ascii <- stri_trans_general(country_name, "Latin-ASCII")
+  
+  # find the original country spelling from the dataset
+  original_name <- df |>
+    filter(ASCII == country_name_ascii) |>
+    pull(Country) |>
+    unique()
+  
+  # create summary table
+  df |>
+    filter(ASCII == country_name_ascii) |>
+    arrange(Year) |> 
+    mutate(`Annual Change in Measles Rate` = `Total Measles per Million` - 
+             lag(`Total Measles per Million`)) |>
+    select(Year, `Total Pop.`, `Total Measles per Million`, 
+           `Annual Change in Measles Rate`) |>
+    gt() |>
+    tab_header(title = md(paste0("Annual Change in Measles Cases Rate per Million in ", 
+                                 original_name))) |>
+    cols_label(Year = md("**Year**"),
+               "Total Pop." = md("**Total Pop.**"),
+               "Total Measles per Million" = md("**Total Measles per Million**"),
+               "Annual Change in Measles Rate" = md("**Annual Change in Measles Rate**"))}
+```
+
+```{r}
+# test cases
+yoy_change(measles_year, "Chad")
+yoy_change(measles_year, "Turkiye")
+yoy_change(measles_year, "China")
+```
+
+### **summarize_country_seasons()**
+
+**summarize_country_seasons():** when given the measles dataframe and desired countries, it outputs the total number of measles cases for the countries across different seasons for the entire data collection time period
+
+**Note:** the country name can be spelled changing special characters (i.e. Turkiye)
+
+-   summary using modified columns produced with custom function and iteration
+
+```{r}
+# southern hemisphere countries in dataset (obtained through AI)
+southern_hemisphere <- c(
+  "Angola", "Botswana", "Burundi", "Comoros", "Eswatini", "Lesotho", 
+  "Madagascar", "Malawi", "Mozambique", "Namibia", "Rwanda", 
+  "South Africa", "Zambia", "Zimbabwe", "Argentina", 
+  "Bolivia (Plurinational State of)", "Brazil", "Chile", "Paraguay", 
+  "Peru", "Uruguay", "Indonesia", "Timor-Leste", "Australia", 
+  "Cook Islands", "Fiji", "New Zealand", "Niue", "Papua New Guinea", 
+  "Samoa", "Solomon Islands", "Tonga", "Tuvalu", "Vanuatu")
+
+# create season variable
+measles_seasons <- measles |>
+  mutate(Month = month(Date),
+         Season = case_when(
+                  # southern hemisphere
+                  Country %in% southern_hemisphere & Month %in% c(12, 1, 2)  ~ "Summer",
+                  Country %in% southern_hemisphere & Month %in% c(3, 4, 5)   ~ "Autumn",
+                  Country %in% southern_hemisphere & Month %in% c(6, 7, 8)   ~ "Winter",
+                  Country %in% southern_hemisphere & Month %in% c(9, 10, 11) ~ "Spring",
+    
+                  # northern hemisphere
+                  Month %in% c(12, 1, 2)  ~ "Winter",
+                  Month %in% c(3, 4, 5)   ~ "Spring",
+                  Month %in% c(6, 7, 8)   ~ "Summer",
+                  Month %in% c(9, 10, 11) ~ "Autumn")) |>
+  select(-Month)
+```
+
+```{r}
+summarize_country_seasons <- function(df, country_name) {
+   # input checks
+  required_cols <- c("Season", "Country", "Total Measles", "ASCII")
+  
+  if (!all(required_cols %in% names(df))) {
+    missing_cols <- required_cols[!required_cols %in% names(df)]
+    stop(paste("Missing required columns:", paste(missing_cols, collapse = ", ")))}
+  
+  if (!is.character(country_name) || length(country_name) != 1) {
+    stop("Country Name must be a valid country.")}
+  
+  # empty dataset
+  if (nrow(df) == 0) {
+    warning("No data found.")}
+  
+  # handle special characters
+  country_ascii <- stri_trans_general(country_name, "Latin-ASCII")
+  
+  # get proportions
+  df |>
+    filter(ASCII == country_ascii) |>
+    group_by(Country, Season) |>
+    summarise(Total_Cases = sum(`Total Measles`, na.rm = TRUE), 
+              .groups = "drop") |>
+    mutate(Proportion = round((Total_Cases / sum(Total_Cases)), 4)) |>
+    select(-Total_Cases)}
+```
+
+```{r}
+# choose countries
+selected_countries <- c("Brazil", "Turkiye", "South Africa", "Australia")
+
+# map data
+map_df(selected_countries, 
+       ~summarize_country_seasons(df = measles_seasons,
+                                  country_name = .x)) |>
+  pivot_wider(names_from = Season, 
+              values_from = Proportion,
+              values_fill = NA) |>
+  gt() |>
+  tab_header(title = md(paste0("Proportion of Measles Cases Across Different Seasons"))) |>
+    cols_label(Country = md("**Country**"),
+               "Autumn" = md("**Autumn**"),
+               "Spring" = md("**Spring**"),
+               "Summer" = md("**Summer**"),
+               "Winter" = md("**Winter**")) 
+```
+
+### summ_df()
+
+**summ_df():** when given the measles year dataframe, the function returns a dataframe summary that takes specific columns and lists the IQR, mean, median, and standard deviation of numeric variables and the unique number of levels for categorical variables.
+
+-   summary using existing columns produced with custom function and iteration
+
+```{r}
+summ_stats <- function(x){
+  if (is.numeric(x)){
+    tibble(Mean = round(mean(x, na.rm = T), 4),
+           Median = round(median(x, na.rm = T), 4),
+           `Standard Deviation` = round(sd(x, na.rm = T), 4),
+           IQR = round(IQR(x, na.rm = T), 4))}
+  
+  else if (is.factor(x) || is.character(x)){
+    tibble(Levels = length(unique(x)))}
+  
+  else {
+    warning("Unsupported input type")
+    return(NULL)}}
+
+summ_df <- function(df){
+  if (is.data.frame(df)){
+    df |>
+      mutate(Year = as.factor(Year)) |>
+      map(summ_stats) |>
+      bind_rows(.id = "Variable") |>
+      pivot_longer(cols = !Variable,
+                   names_to = "Summary") |>
+      pivot_wider(names_from = Variable) |>
+      select(Summary, Country, Year, `Total Pop.`, 
+             `Total Suspected Cases`, `Total Measles per Million`) |>
+      gt() |>
+      tab_header(title = md("**Data Frame Summary**")) |>
+      cols_label(Summary = md("**Summary**"),
+                 Country = md("**Country**"),
+                 Year = md("**Year**"),
+                 `Total Pop.` = md("**Total Population**"),
+                 `Total Suspected Cases` = md("**Total Suspected Measles and Rubella Cases**"),
+                 `Total Measles per Million` = md("**Measles Rate Per Million**"))}
+  else {
+    warning("Input type not supported")
+    return(NULL)}}
+
+summ_df(measles_year)
+```
+
