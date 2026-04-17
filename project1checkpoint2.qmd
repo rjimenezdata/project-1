@@ -1,9 +1,10 @@
 ---
 title: "project-1-checkpoint2"
-author: "Ruben Jimenez"
+author: "Cameron An"
 format: html
 editor: visual
 code-tools: true
+embed-resources: true
 ---
 
 ## Data
@@ -70,8 +71,6 @@ measles_year <- cases_year |>
          "Total Discarded per Million" = discarded_non_measles_rubella_cases_per_100000_total_population) |>
   mutate(ASCII = stri_trans_general(Country, "Latin-ASCII")) |>
   slice(-1)
-
-# write.csv(measles_year, "measles_year.csv")
 ```
 
 ## Functions
@@ -327,4 +326,3 @@ summ_df <- function(df){
 
 summ_df(measles_year)
 ```
-
