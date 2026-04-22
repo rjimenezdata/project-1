@@ -782,7 +782,7 @@ measles_final <- measles_year_clean |>
 
 ```{r}
 measles_final |>
-  select(-`Govt. Leaders`) |>
+  select(-c(`Govt. Leaders`, `Secondary Religion`, `Tertiary Religion`, `Secondary Religion Pop`, `Tertiary Religion Pop`, `Secondary Pct Religious`, `Tertiary Pct Religious`, `X`, `error`)) |>
   head(10) |>
   gt() |> 
   tab_header(title = md("Final Dataset")) |>
@@ -804,16 +804,9 @@ measles_final |>
                Latitude = md("**Latitude**"),
                Longitude = md("**Longitude**"),
                `Primary Religion` = md("**Primary Religion**"),
-               `Secondary Religion` = md("**Secondary Religion**"),
-               `Tertiary Religion` = md("**Tertiary Religion**"),
                `Primary Religion Pop` = md("**Primary Religion Population**"),
-               `Secondary Religion Pop` = md("**Secondary Religion Population**"),
-               `Tertiary Religion Pop` = md("**Tertiary Religion Population**"),
                `Primary Pct Religious` = md("**Primary Pct Religious**"),
-               `Secondary Pct Religious` = md("**Secondary Pct Religious**"),
-               `Tertiary Pct Religious` = md("**Tertiary Pct Religious**"),
                `Govt. Type` = md("**Government Type**"),
-               #government_leaders = md("**Government Leaders**"),
                HDI = md("**Human Development Index**"),
                Borders = md("**Border Nations**"),
                Area = md("**Land Area**"),
@@ -839,8 +832,6 @@ measles_final |>
         `Total Discarded`,
         Area,
         `Primary Religion Pop`,
-        `Secondary Religion Pop`,
-        `Tertiary Religion Pop`
         
       ),
       decimals = 0,
