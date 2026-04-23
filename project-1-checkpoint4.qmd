@@ -3,6 +3,7 @@ title: "project-1-checkpoint4"
 author: "Ruben Jimenez"
 format: html
 editor: visual
+embed-resources: true
 ---
 
 ```{r}
