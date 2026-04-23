@@ -1,6 +1,6 @@
 ---
 title: "project-1-checkpoint4"
-author: "Jasmine Cabrera"
+author: "Ruben Jimenez"
 format: html
 editor: visual
 ---
@@ -114,18 +114,19 @@ measles_heatmap <- measles_final |>
   geom_tile(color = "white") +
   
   # non-default colors
-  scale_fill_viridis_c(option = "C") +
+  scale_fill_viridis_c(option = "C") + guides(fill = guide_colorbar(direction = "horizontal")) +
   
   # non-default theme
   theme_classic() +
   theme(plot.title = element_text(face = "bold", size = 14),
-        axis.title = element_text(size = 12)) +
+        axis.title = element_text(size = 12),
+        legend.position = "top") +
   
   # labels and alt text
   labs(title = "Average Measles Cases per Million by Region and Year",
        x = "Year",
        y = "",
-       fill = "ln(Measles Cases per Million + 1)",
+       fill = "Log (Measles Cases Per Million +1)",
        alt = paste("The AMRO region does not have data for 2012 and 2013. The heatmap indicates that there was a measles outbreak from 2014-2016 in the WPRO region. AFRO seems to have relatively consistent measles cases over time, with a spike in 2019.")) +
   scale_x_continuous(breaks = seq(min(measles_final$Year),
                                   max(measles_final$Year),
