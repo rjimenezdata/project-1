@@ -1,0 +1,85 @@
+---
+title: "project1-checkpoint4"
+author: "Ruben Jimenez"
+format: html
+editor: visual
+---
+
+```{r, output = FALSE}
+library(tidyverse)
+library(rnaturalearth)
+library(sf)
+library(gt)
+library(httr)
+library(tidyjson)
+library(jsonlite)
+library(glue)
+library(car)
+library(lme4)
+library(pscl)
+library(fitdistrplus)
+library(broom)
+```
+
+```{r, message=FALSE}
+measles_final <- read_csv("measles_final.csv")
+```
+
+```{r, warning=FALSE, output=FALSE}
+m0 <- glm(`Total Measles` ~ 1, family = poisson(link = "log"), data = measles_final)
+
+m1 <- glm(`Total Measles` ~ `Density` + `Primary Religion` + `Nominal GDP per Capita` + Region + Year + `MCV1 Coverage`, family = poisson(link = "log"), data = measles_final)
+
+m2 <- glm(`Total Measles` ~ `Density` + Region + Year + `MCV1 Coverage`, family = poisson(link = "log"), data = measles_final)
+
+m3 <- zeroinfl(`Total Measles` ~ `Density` + Region + `MCV1 Coverage`, dist = "poisson", data = measles_final)
+
+m4 <- glm(`Total Measles` ~ `Density` + `Nominal GDP per Capita` + Region + Year + `MCV1 Coverage`, family = poisson(link = "log"), data = measles_final)
+
+m5 <- zeroinfl(`Total Measles` ~ `Density` + `Nominal GDP per Capita` + Region + Year + `MCV1 Coverage`, dist = "negbin", data = measles_final)
+
+summary(m0)
+summary(m1)
+summary(m2)
+summary(m3)
+summary(m4)
+summary(m5)
+
+logLik(m1)
+logLik(m2)
+logLik(m3)
+logLik(m4)
+logLik(m5)
+
+vif(m1)
+vif(m2)
+vif(m4)
+```
+
+```{r}
+final_model_coefs <- coef(m4)
+
+tidy(m4) |>
+  mutate(term = str_replace_all(term, c(
+    "Region" = "",
+    "Density" = "Pop. Density",
+    "\\(" = "",
+    "\\)" = "",
+    "\\`" = ""
+  ))) |>
+  rename("Model Term" = "term",
+         "Estimate" = "estimate",
+         "Std. Error" = "std.error",
+         "Z-Statistic" = "statistic",
+         "p-value" = "p.value") |>
+  gt() |>
+  fmt_number(decimals = 3) |>
+  tab_header(
+    title = md("**Poisson GLM Results**")
+  )  |>
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) |>
+  tab_caption("Table 1: Zero-Inflated Poisson Regression Results. Baseline region is Africa.")
+```
