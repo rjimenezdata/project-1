@@ -1,0 +1,811 @@
+---
+title: "project-1-checkpoint3"
+author: "Jasmine Cabrera"
+format: html
+embed-resources: true
+editor: visual
+code-tools: true
+---
+
+# External Data
+
+## Libraries
+
+```{r}
+#| message: false
+# libraries
+library(rvest)
+library(tidyverse)
+library(rnaturalearth)
+library(sf)
+library(gt)
+library(httr)
+library(tidyjson)
+library(jsonlite)
+library(glue)
+
+# measles_year dataset
+measles_year <- read_csv(here::here("data", "measles_year.csv"))
+head(measles_year)
+```
+
+## Motivation:
+
+Measles continues to affect millions of people worldwide each year, despite major scientific advancements and the availability of an effective vaccine. We aim to explore the socioeconomic and geographic factors that may influence measles infection rates. By analyzing these patterns, we hope to better understand disparities across regions and identify populations at higher risk. Countries in Africa are of particular interest, as they are among the most heavily impacted by the measles disease.
+
+**Source:** <https://www.who.int/news/item/05-12-2019-more-than-140-000-die-from-measles-as-cases-surge-worldwide>
+
+# Webscraping:
+
+Like many diseases, measles transmission is influenced by environmental conditions. Research suggests that the virus is less likely to thrive in extremely cold or hot temperatures, while lower relative humidity can make it easier to spread. It is also important to consider a country's life expectancy at birth, as it offers insight into overall healthcare quality and the level of development.
+
+**Source:** <https://www.tandfonline.com/doi/full/10.4161/hv.27826#d1e168>
+
+### get_info_from_page():
+
+pulls information from a website.
+
+```{r}
+get_info_from_page <- function(page, css_selector, node, type) {
+  
+  # grab the css and node elements from the page
+  if (type == "temp"){
+  page |>
+    html_element(css_selector) |>
+    html_elements(node) |>
+    html_text(trim = TRUE)}
+  
+  else if(type == "url"){
+  page |>
+    html_elements(node) |> 
+    html_attr("href")}
+  
+  else {
+  page |>
+    html_elements(node) |> 
+    html_text2()}}
+```
+
+## Scrape Average Yearly Temperature
+
+**Source:** <https://en.wikipedia.org/wiki/List_of_countries_by_average_yearly_temperature>
+
+**Data Description:** Wikipedia has data on the average yearly temperature across multiple countries.
+
+### scrape_temp_page():
+
+calls get_info_from_page() and grabs different elements, combining into clean dataframe.
+
+```{r}
+scrape_temp_page <- function(url) {
+    
+    # 1 second crawl delay
+    Sys.sleep(1)
+    
+    # read in page
+    page <- read_html(url)
+    
+    # country/region
+    country_region <- get_info_from_page(page, 
+                                         css_selector = "table.wikitable", 
+                                         node = "tbody tr td:nth-child(2)",
+                                         type = "temp")
+      
+    # continent
+    continent <- get_info_from_page(page,
+                                    css_selector = "table.wikitable", 
+                                    node = "tbody tr td:nth-child(3)",
+                                    type = "temp")
+    
+    # temp 
+    temp <- get_info_from_page(page, 
+                               css_selector = "table.wikitable", 
+                               node = "tbody tr td:nth-child(4)",
+                               type = "temp")
+    
+    # Put page elements into a data frame / tibble
+    tibble(Country = country_region,
+           Continent = continent,
+           Temperature = temp)}
+
+```
+
+```{r}
+# apply to temp page
+url <- "https://en.wikipedia.org/wiki/List_of_countries_by_average_yearly_temperature"
+temperature_df <- scrape_temp_page(url)
+```
+
+clean temperature dataframe:
+
+```{r}
+# split temperature col into celsius and fahrenheit
+temperature_df <- temperature_df |>
+  mutate(`Avg. Celsius` = as.numeric(str_extract(Temperature, "\\d+\\.\\d+")),
+         `Avg. Fahrenheit` = as.numeric(str_extract(Temperature, "(?<=\\()\\d+\\.\\d+"))) |>
+  select(-Temperature)
+
+head(temperature_df)
+```
+
+## Scrape Life Expectancy
+
+**Source:** <https://data.worldbank.org/country>
+
+**Data Description:** The world bank group has large amounts of data relating to a given country's socioeconomic factors.
+
+### grab_urls():
+
+scrapes the data.worldbank.org page for all of the urls for each country
+
+```{r}
+grab_urls <- function(country_url){
+  # read page
+  page <- read_html(country_url)
+    
+  # links
+  country_links <- get_info_from_page(page, 
+                                      css_selector = "", 
+                                      node = "section.nav-item ul li a",
+                                      type = "url")
+  
+  # country
+  country <- get_info_from_page(page, 
+                                css_selector = "", 
+                                node = "section.nav-item ul li a",
+                                type = "text")
+  # full url
+  tibble(link = paste0("https://data.worldbank.org", country_links),
+         country = country)}
+```
+
+Keep relevant countries for more efficient webscraping
+
+```{r}
+# grab urls
+country_url <- "https://data.worldbank.org/country"
+all_country_urls <- grab_urls(country_url)
+
+# countries are not exactly named the same
+measles_year |>
+  filter(!ASCII %in% all_country_urls$country) |>
+  pull(Country) |>
+  unique()
+
+# clean country col to match
+all_country_urls <- all_country_urls |>
+  separate_wider_delim(country, 
+                       delim = ",", 
+                       names = c("country", "country_extra"), 
+                       too_few = "align_start") |>
+  mutate(country = str_replace_all(country, "(?i)st\\.", "Saint"),
+         country = case_when(str_detect(country_extra, "Dem\\.") ~ paste("Democratic", country),
+                             TRUE ~ country),
+         country = recode_values(country,
+                                 "Lao PDR" ~ "Lao",
+                                 "Kyrgyz Republic" ~ "Kyrgyzstan",
+                                 "Slovak Republic" ~ "Slovakia",
+                                 default = country)) |>
+         select(-country_extra)
+
+
+# clean ASCII col to match
+measles_year <- measles_year |>
+  mutate(ASCII = str_replace_all(ASCII, "\\s*\\(.*?\\)", ""),
+         ASCII = str_remove_all(ASCII, "(?i)\\bRepublic of (the )?"),
+         ASCII = str_remove_all(ASCII, "(?i)\\bPeople's\\s*"),
+         ASCII = recode_values(ASCII,
+                          "United Kingdom of Great Britain and Northern Ireland" ~ "Ireland",
+                          "United States of America" ~ "United States",
+                          "Lao Democratic Republic" ~ "Lao",
+                          "United Tanzania" ~ "Tanzania",
+                          "Democratic Republic of the Congo" ~ "Democratic Congo",
+                          default = ASCII),
+         ASCII = str_trim(ASCII))
+
+# check changes were made
+measles_year |>
+  filter(!ASCII %in% all_country_urls$country) |>
+  pull(Country) |>
+  unique()
+```
+
+The website does not like large calls, so we have to resort to batches.
+
+```{r}
+# grab africa countries 
+measles_africa <- measles_year |>
+  filter(Region == "AFRO")
+
+# keep only countries in measles_year 
+africa_country_urls <- all_country_urls |>
+  filter(country %in% measles_africa$ASCII)
+
+# grab amro countries
+measles_amro <- measles_year |>
+  filter(Region == "AMRO")
+
+amro_country_urls <- all_country_urls |>
+  filter(country %in% measles_amro$ASCII)
+
+# grab emro countries
+measles_emro <- measles_year |>
+  filter(Region == "EMRO")
+
+emro_country_urls <- all_country_urls |>
+  filter(country %in% measles_emro$ASCII)
+
+# grab euro countries
+measles_euro <- measles_year |>
+  filter(Region == "EURO")
+
+euro_country_urls <- all_country_urls |>
+  filter(country %in% measles_euro$ASCII)
+
+# grab searo countries
+measles_searo <- measles_year |>
+  filter(Region == "SEARO")
+
+searo_country_urls <- all_country_urls |>
+  filter(country %in% measles_searo$ASCII)
+
+# grab wpro countries
+measles_wpro <- measles_year |>
+  filter(Region == "WPRO")
+
+wpro_country_urls <- all_country_urls |>
+  filter(country %in% measles_wpro$ASCII)
+```
+
+### scrape_country_page():
+
+scrapes a country's data.worldbank.org page for its life expectancy
+
+```{r}
+scrape_country_page <- function(url) {
+    
+    # 1 second crawl delay
+    Sys.sleep(runif(1, min = 4, max = 6))
+    
+    # read in page
+    page <- read_html(url)
+    
+    # le_node
+    le_node <- page |> 
+    html_elements(".indicator-item") |> 
+    keep(~str_detect(html_text(.x), "Life expectancy at birth"))
+      
+    # life_exp
+    life_exp <- le_node |> 
+    html_element(".indicator-item__data-info span") |> 
+    html_text2() |> 
+    as.numeric()
+    
+    # year 
+    year <- le_node |> 
+    html_element(".indicator-item__data-info-year") |> 
+    html_text2() |> 
+    str_extract("\\d{4}") |> 
+    as.numeric()
+    
+    # Put page elements into a data frame / tibble
+    tibble(life_exp = life_exp,
+           year = year)}
+```
+
+```{r}
+#| cache: true
+#| eval: false
+# webscrape in batches
+africa_life_exp <- map(.x = africa_country_urls$link, 
+                       .f = scrape_country_page) |>
+                   bind_rows()
+
+amro_life_exp <- map(.x = amro_country_urls$link, 
+                     .f = scrape_country_page) |>
+                 bind_rows()
+
+emro_life_exp <- map(.x = emro_country_urls$link, 
+                     .f = scrape_country_page) |>
+                 bind_rows()
+
+euro_life_exp <- map(.x = euro_country_urls$link, 
+                     .f = scrape_country_page) |>
+                 bind_rows()
+
+searo_life_exp <- map(.x = searo_country_urls$link, 
+                     .f = scrape_country_page) |>
+                 bind_rows()
+
+wpro_life_exp <- map(.x = wpro_country_urls$link, 
+                     .f = scrape_country_page) |>
+                 bind_rows()
+
+
+# combine countries and life expectancies
+africa_life_exp <- cbind(africa_country_urls, africa_life_exp)
+amro_life_exp <- cbind(amro_country_urls, amro_life_exp) 
+emro_life_exp <- cbind(emro_country_urls, emro_life_exp)
+euro_life_exp <- cbind(euro_country_urls, euro_life_exp)
+searo_life_exp <- cbind(searo_country_urls, searo_life_exp) 
+wpro_life_exp <- cbind(wpro_country_urls, wpro_life_exp) 
+all_life_exp <- bind_rows(africa_life_exp, amro_life_exp, emro_life_exp,
+                          euro_life_exp, searo_life_exp, wpro_life_exp)
+
+# save to csv
+all_life_exp |>
+  write_csv("measles_life_expectancy_data.csv")
+```
+
+```{r}
+# load in csv 
+life_exp_data <- read.csv(here::here("data", "measles_life_expectancy_data.csv"))
+life_exp_data <- life_exp_data |>
+  select(-c(link, year)) |>
+  rename(Country = country, 
+         `Life Expectancy 2024` = life_exp)
+
+head(life_exp_data)
+```
+
+## Join and Clean DF
+
+Join temperature and life expectancy to measles_year dataframe
+
+```{r}
+# join temperature
+measles_year <- measles_year |>
+  left_join(temperature_df, by = "Country") |>
+  left_join(life_exp_data, by = c("ASCII" = "Country"))
+
+head(measles_year)
+```
+
+## Summaries and Visualizations
+
+```{r}
+#| warning: false
+# load world map data
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+world_life_exp <- world |>
+  left_join(measles_year |> 
+            distinct(Country, `Life Expectancy 2024`), 
+            by = c("name" = "Country"))
+
+ggplot(data = world_life_exp) +
+  geom_sf(aes(fill = `Life Expectancy 2024`), 
+          color = "white", size = 0.1) +
+  scale_fill_viridis_c(option = "magma", 
+                       na.value = "grey80", name = "Years") +
+  theme_void() +
+  labs(title = "Global Life Expectancy at Birth (2024 Projection)",
+       caption = "Countries within Africa tend to have an extremely lower lower life expectancy as opposed to other regions.",
+       subtitle = "Source: https://data.worldbank.org/") +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+#| warning: false
+plot_data <- measles_year |>
+  group_by(Country, ASCII, Region, `Life Expectancy 2024`) |>
+  summarize(total_rate_avg = mean(`Total Measles per Million`, na.rm = TRUE),
+            .groups = "drop")
+
+region_medians <- plot_data |>
+  group_by(Region) |>
+  summarize(median_life_exp = median(`Life Expectancy 2024`, na.rm = TRUE),
+            median_rate = median(total_rate_avg, na.rm = TRUE))
+
+region_medians |>
+  gt() |>
+  tab_header(title = md(paste0("Median Measles Rate Across Each Region"))) |>
+  cols_label("Region" = md("**Region**"),
+               "median_life_exp" = md("**Median Life Expectancy (years)**"),
+               "median_rate" = md("**Median Measles Rate**")) |>
+  tab_source_note(md("Despite having the lowest median life expectancy, countries in Africa do not have the highest median Measles Rate."))
+```
+
+```{r}
+#| warning: false
+plot_data |>
+ggplot(aes(x = `Life Expectancy 2024`, y = total_rate_avg, color = Region)) +
+  geom_jitter(alpha = 0.7) +
+  geom_point(data = region_medians, 
+             aes(x = median_life_exp, y = median_rate), 
+             shape = 18, 
+             size = 4,
+             color = "black") +
+  geom_point(data = region_medians, 
+             aes(x = median_life_exp, y = median_rate), 
+             shape = 18, 
+             size = 2) +     
+  labs(title = "Average Measles Rate vs. Life Expectancy",
+       subtitle = "Diamonds represent the regional medians",
+       x = "Life Expectancy at Birth (years)",
+       y = "")
+```
+
+# API
+
+## Rest API
+
+**Data Description:** This is country-level data with 45 potential fields. We obtained the 10 most important variables for our analyses: country name, geolocation (longitude & latitude), population density, gdp, border nations, gini, hdi, government type, and religion. We plan on looking at measles rates related to socioeconomic variables like government, religion, hdi, gini, and gdp. We also plan on looking at measles rates related to geographic factors like border nations and geolocation. We need variables like cca3 to use in identifying country matches to join to our other dataframes. Variables like border are maintained in lists due to their varying lengths.
+
+**Note**: Variables like border are maintained in lists due to their varying lengths.
+
+**Source:** <https://restcountries.com/>
+
+```{r}
+#| warning: false
+world_df <- GET("https://restcountries.com/v4/all?fields=cca3,geolocation,area,borders,hdi,gini,government,religion") |> 
+  (\(x) rawToChar(x$content))() |> 
+  fromJSON() |>
+  unnest_wider(c(gini, geolocation, government, religion), "_") |>
+  relocate(cca3) |>
+  rename("ISO3" = cca3) |>
+  arrange(ISO3)
+
+world_df <- world_df |>
+  mutate(Religion = map_chr(religion_name, ~ paste(.x, collapse = ", ")),
+         `Religion Pop.` = map_chr(religion_population, ~ paste(.x, collapse = ", ")),
+         `Pct Religious` = map_chr(religion_percentage, ~ paste(.x, collapse = ", "))) |>
+  mutate(Religion = str_replace_all(Religion, ",\\s*", ","),
+         `Religion Pop.` = str_replace_all(`Religion Pop.`, ",\\s*", ","),
+         `Pct Religious` = str_replace_all(`Pct Religious`, ",\\s*", ",")) |>
+  separate(Religion,
+           into = c("Primary Religion", "Secondary Religion",
+                    "Tertiary Religion"),
+           sep = ",", fill = "right") |>
+  separate(`Religion Pop.`,
+           into = c("Primary Religion Pop", "Secondary Religion Pop",
+                    "Tertiary Religion Pop"),
+           sep = ",", fill = "right") |>
+  separate(`Pct Religious`,
+           into = c("Primary Pct Religious", "Secondary Pct Religious",
+                    "Tertiary Pct Religious"),
+           sep = ",", fill = "right") |>
+  mutate(across(contains("Pop"),
+                ~ as.numeric(str_replace_all(.x, ",", ""))),
+         across(contains("Pct"), as.numeric)) |>
+  select(-c(religion_name, religion_population, religion_percentage, 
+            `Secondary Pct Religious`, `Tertiary Pct Religious`,
+            `Secondary Religion Pop`, `Tertiary Religion Pop`,
+            `Secondary Religion`, `Tertiary Religion`))
+
+world_df |>
+  head(10) |>
+  select(-government_leaders) |>
+  gt() |> tab_header(title = md("REST API Data")) |>
+    cols_label(ISO3 = md("**ISO3**"),
+               gini_year = md("**GINI Year**"),
+               gini_value = md("**GINI Value**"),
+               geolocation_latitude = md("**Latitude**"),
+               geolocation_longitude = md("**Longitude**"),
+               `Primary Religion` = md("**Primary Religion**"),
+               `Primary Religion Pop` = md("**Primary Religion Population**"),
+               `Primary Pct Religious` = md("**Primary Pct Religious**"),
+               government_type = md("**Government Type**"),
+               hdi = md("**Human Development Index**"),
+               borders = md("**Border Nations**"),
+               area = md("**Land Area**")) |>
+  fmt_number(columns = c(`Primary Religion Pop`,
+                         area),
+             decimals = 0,
+             use_seps = TRUE) |>
+  fmt_number(columns = -c(`Primary Religion Pop`, 
+                          area),
+             decimals = 3,
+             use_seps = TRUE) |>
+  tab_caption(md("Table 1. Variables left in lists have varying lengths"))
+
+```
+
+## GDP API
+
+**Data Description:** We also have another API dataset that contains GDP data for each country. We are interested in seeing how a country's (or region's) GDP impacts their measles rates. The variables include:
+
+-   *gdp_growth*: GDP growth rate as a percentage
+-   *gdp_nominal*: Nominal GDP in billions of US dollars
+-   *gdp_per_capita_nominal*: Nominal GDP per capita in US dollars
+-   *gdp_ppp*: GDP at purchasing power parity (PPP) in billions of US dollars
+-   *gdp_per_capita_ppp*: GDP per capita at PPP in US dollars
+-   *gdp_ppp_share*: Country's share of world GDP at PPP as a percentage
+
+**Source:** <https://api-ninjas.com/api/gdp>
+
+**Note:** We obtained GDP data from the API below but we reached our monthly limit of pulls so we cannot use it anymore. However, when we originally pulled from the API, the data was saved into a CSV so we will use that to read in the data.
+
+```{r}
+# base url for GDP API
+base_url <- "https://api.api-ninjas.com/v1/gdp?country="
+```
+
+```{r}
+# function to get GDP info by country code
+gdp_info <- function(country_code) {
+  url <- str_c(base_url, country_code, 
+               #"&year=", as.character(year),
+               "&X-Api-Key=lJsfvISfAdepHh5moYOXLLFjSKBr5MYFQ1E9V7YN")
+  
+  rawToChar(GET(url)$content) |>
+    fromJSON()}
+```
+
+```{r}
+#| eval: false
+gdp_data <- map_dfr(
+  unique(measles_year$`Country Code`),
+  gdp_info) |>
+  filter(year > 2011)
+
+# save to csv
+gdp_data |>
+  write_csv("gdp_data.csv")
+```
+
+```{r}
+gdp_data <- read.csv(here::here("data", "gdp_data.csv"))
+```
+
+## Join and Clean API Data
+
+```{r}
+measles_year_clean <- measles_year |>
+  left_join(world_df, by = c("Country Code" = "ISO3")) |>
+  left_join(gdp_data,
+            by = c("Country Code" = "country",
+                   "Year" = "year")) |>
+  mutate(Density = `Total Pop.`/area) |>
+  select(-c(ASCII, Continent, "Annualized Pop. 2025"))
+```
+
+## Summaries & Visualizations
+
+```{r}
+measles_year_clean |>
+  head(5) |>
+  gt() |> 
+  tab_header(title = md("Combined Data Sets")) |>
+    cols_label(Region = md("**Region**"),
+               Country = md("**Country**"),
+               "Country Code" = md("**Country Code**"),
+               Year = md("**Year**"),
+               "Total Pop." = md("**Total Pop.**"),
+               Density = md("**Population Density (People/km^2)**"),
+              "Total Suspected Cases" = md("**Total Suspected Cases**"),
+              "Total Measles" = md("**Total Measles Cases**"),
+               "Total Lab Measles" = md("**Total Lab Measles**"),
+              "Total Epi Measles" = md("**Total Epidem Measles**"),
+              "Total Clinical Measles" = md("**Clinical Measles Cases**"),
+              "Total Measles per Million" = md("**Measles Rate Per Million**"),
+              "Total Discarded" = md("**Discarded Cases**"),
+              "Total Discarded per Million" = md("**Discarded Rate Per Million**"),
+               gini_year = md("**GINI Year**"),
+               gini_value = md("**GINI Value**"),
+               geolocation_latitude = md("**Latitude**"),
+               geolocation_longitude = md("**Longitude**"),
+              `Primary Religion` = md("**Primary Religion**"),
+              `Primary Religion Pop` = md("**Primary Religion Population**"),
+              `Primary Pct Religious` = md("**Primary Pct Religious**"),
+               government_type = md("**Government Type**"),
+               hdi = md("**Human Development Index**"),
+               borders = md("**Border Nations**"),
+               area = md("**Land Area**"),
+               "Avg. Celsius" = md("**Avg. Celsius**"),
+               "Avg. Fahrenheit" = md("**Avg. Fahrenheit**"),
+               "Life Expectancy 2024" = md("**Life Expectancy 2024**"),
+               gdp_growth = md("**GDP Growth (%)**"),
+               gdp_nominal = md("**Nominal GDP (Billions USD)**"),
+               gdp_per_capita_nominal = md("**Nominal GDP per Capita (USD)**"),
+               gdp_ppp = md("**GDP (PPP, Billions USD)**"),
+               gdp_per_capita_ppp = md("**GDP per Capita (PPP, USD)**"),
+               gdp_ppp_share = md("**Share of World GDP (PPP, %)**")) |>
+  fmt_number(decimals = 3,
+             columns = -c(Year, geolocation_latitude,
+                          geolocation_longitude),
+             use_seps = TRUE) |>
+  tab_caption(md("Table 2. REST API Data joined with annual measles data"))
+```
+
+```{r}
+measles_year_clean |>
+  group_by(Country) |>
+  summarise(
+    Avg_Pop = mean(`Total Pop.`, na.rm = TRUE),
+    Avg_Density = mean(Density, na.rm = TRUE),
+    Avg_Measles_Rate = mean(`Total Measles per Million`, na.rm = TRUE),
+    .groups = "drop") |>
+  filter("Avg_Pop" >= 100000) |>
+  slice_max(Avg_Density, n = 5) |>
+  gt() |>
+  tab_header(title = md("Most Population-Dense Countries (Historical Average)")) |>
+  cols_label(
+    Country = md("**Country**"),
+    Avg_Pop = md("**Avg. Population**"),
+    Avg_Density = md("**Avg. Density (People/km^2)**"),
+    Avg_Measles_Rate = md("**Avg. Measles Rate Per Million**")) |>
+  fmt_number(decimals = 3, use_seps = TRUE) |>
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()) |>
+  tab_caption("Table 3. Values represent the mean across all years present in the dataset. Average Population is at least 100k.")
+```
+
+```{r}
+measles_year_clean |>
+  slice_max(`Total Measles per Million`, n = 5) |>
+  select(Country, Year, Density, `Total Measles per Million`) |>
+  gt() |>
+  tab_header(title = md("Countries With Greatest Measles Rate")) |>
+  fmt_number(decimals = 3, use_seps = TRUE,
+             columns = -Year) |>
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()) |>
+  tab_caption("Table 4. Countries with high measles rates appear to have relatively low population densities")
+```
+
+# CSV
+
+In a .csv file already, so it could not be scraped, but I thought it would be interesting.
+
+## Measles Vaccine (1st Dose) Immunization
+
+**Data Description:** The WHO has data on measles containing vaccine first-dose (MCV1) immunization coverage among one year olds.
+
+**Motivation:** Measles is highly contagious, with children under five facing the greatest risk of severe health complications. As a result, examining global coverage rates for the first dose of the measles vaccine is especially important.
+
+**Source:** <https://www.who.int/data/gho/data/indicators/indicator-details/GHO/measles-containing-vaccine-first-dose-(mcv1)-immunization-coverage-among-1-year-olds-(-)>
+
+<https://www.cdc.gov/measles/about/index.html>
+
+```{r}
+#| message: false
+#| warning: false
+
+mcv <- read_csv(here::here("data", "mcv1.csv"))
+
+mcv <- mcv |> 
+  dplyr::select(SpatialDimValueCode, Period, Value) |>
+  rename("Country Code" = SpatialDimValueCode,
+         "MCV1 Coverage" = Value,
+         "MCV1 Year" = Period) 
+
+# pivot to make clearer
+measles_year_clean <- measles_year_clean |>
+  left_join(mcv, by = join_by("Country Code", "Year" == "MCV1 Year"))
+```
+
+## Visualization
+
+```{r}
+#| warning: false
+
+measles_year_clean |>
+  group_by(Region, Year) |>
+  summarise(mean_coverage = mean(`MCV1 Coverage`, na.rm = TRUE), 
+            .groups = "drop") |>
+  ggplot(aes(x = Year, y = mean_coverage, color = Region)) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  labs(title = "Average MCV1 Coverage (%) for 1 Year Olds Across Time",
+       subtitle = "Source: WHO",
+       y = "",
+       x = "Year",
+       caption = "The average measles vaccine coverage is substantially lower for countries in Africa than other regions.
+       We also see a dip in coverage globally around the start of the Covid pandemic.") +
+  theme_minimal()
+```
+
+## Join and Clean Final Dataset
+
+```{r}
+measles_year_clean <- measles_year_clean |>
+  rename(`Gini Year` = gini_year,
+         `Gini Value` = gini_value,
+         "Latitude" = geolocation_latitude,
+         "Longitude" = geolocation_longitude,
+         "Govt. Type" = government_type,
+         "HDI" = hdi,
+         "Borders" = borders,
+         "Area" = area,
+         `GDP Growth (%)` = gdp_growth,
+         `Nominal GDP` = gdp_nominal,
+         `Nominal GDP per Capita` = gdp_per_capita_nominal,
+         `GDP PPP` = gdp_ppp,
+         `GDP per capita PPP` = gdp_per_capita_ppp,
+         `Share of World GDP PPP (%)` = gdp_ppp_share) |>
+  select(-government_leaders)
+
+# clean gini data
+gini_data <- measles_year_clean |>
+  select(`Gini Year`, `Gini Value`, `Country Code`, "Year")
+
+measles_year_clean <- measles_year_clean |>
+  select(-c(`Gini Year`, `Gini Value`))
+  
+gini_data <- gini_data |>
+  unnest(cols = c(`Gini Year`, `Gini Value`)) |>
+  mutate(
+    `Gini Year` = as.numeric(as.character(`Gini Year`)),
+    `Gini Value` = as.numeric(as.character(`Gini Value`))) |>
+  filter(Year == `Gini Year`) |>
+  select(`Country Code`, Year, `Gini Value`)
+
+measles_final <- measles_year_clean |>
+  left_join(gini_data, by = c("Country Code", "Year")) |>
+  select(-c(X, error))
+```
+
+## Final Dataset
+
+```{r}
+measles_final |>
+  head(10) |>
+  gt() |> 
+  tab_header(title = md("Final Dataset")) |>
+    cols_label(Region = md("**Region**"),
+               Country = md("**Country**"),
+               "Country Code" = md("**Country Code**"),
+               Year = md("**Year**"),
+               "Total Pop." = md("**Total Pop.**"),
+               Density = md("**Population Density (People/km^2)**"),
+              "Total Suspected Cases" = md("**Total Suspected Cases**"),
+              "Total Measles" = md("**Total Measles Cases**"),
+               "Total Lab Measles" = md("**Total Lab Measles**"),
+              "Total Epi Measles" = md("**Total Epidem Measles**"),
+              "Total Clinical Measles" = md("**Clinical Measles Cases**"),
+              "Total Measles per Million" = md("**Measles Rate Per Million**"),
+              "Total Discarded" = md("**Discarded Cases**"),
+              "Total Discarded per Million" = md("**Discarded Rate Per Million**"),
+               `Gini Value` = md("**GINI Value**"),
+               Latitude = md("**Latitude**"),
+               Longitude = md("**Longitude**"),
+               `Primary Religion` = md("**Primary Religion**"),
+               `Primary Religion Pop` = md("**Primary Religion Population**"),
+               `Primary Pct Religious` = md("**Primary Pct Religious**"),
+               `Govt. Type` = md("**Government Type**"),
+               HDI = md("**Human Development Index**"),
+               Borders = md("**Border Nations**"),
+               Area = md("**Land Area**"),
+               "Avg. Celsius" = md("**Avg. Celsius**"),
+               "Avg. Fahrenheit" = md("**Avg. Fahrenheit**"),
+               "Life Expectancy 2024" = md("**Life Expectancy 2024**"),
+               `GDP Growth (%)` = md("**GDP Growth (%)**"),
+               `Nominal GDP` = md("**Nominal GDP (Billions USD)**"),
+               `Nominal GDP per Capita` = md("**Nominal GDP per Capita (USD)**"),
+               `GDP PPP` = md("**GDP (PPP, Billions USD)**"),
+               `GDP per capita PPP` = md("**GDP per Capita (PPP, USD)**"),
+               `Share of World GDP PPP (%)` = md("**Share of World GDP (PPP, %)**"),
+               `MCV1 Coverage` = md("**MCV1 Coverage**")) |>
+  fmt_number(columns = c(`Total Pop.`,
+                         `Total Suspected Cases`,
+                         `Total Measles`,
+                         `Total Lab Measles`,
+                         `Total Epi Measles`,
+                         `Total Clinical Measles`,
+                         `Total Discarded`,
+                         Area,
+                         `Primary Religion Pop`),
+             decimals = 0,
+             use_seps = TRUE) |> 
+  fmt_number(columns = c(Latitude,
+                         Longitude,
+                         `Nominal GDP`,
+                         `Nominal GDP per Capita`,
+                         `GDP PPP`,
+                         `GDP per capita PPP`,
+                         `Share of World GDP PPP (%)`,
+                         Density),
+             decimals = 3,
+             use_seps = TRUE)
+```
+
+```{r}
+head(measles_final)
+
+# save to csv
+measles_final |>
+  write_csv("data", "measles_final.csv")
+```

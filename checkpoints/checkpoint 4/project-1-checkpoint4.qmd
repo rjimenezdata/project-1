@@ -1,0 +1,293 @@
+---
+title: "project-1-checkpoint4"
+author: "Jasmine Cabrera"
+format: html
+editor: visual
+---
+
+```{r}
+#| warning: false
+#| message: false 
+
+# load data and libraries
+library(tidyverse)
+library(ggridges)
+library(ggrepel)
+library(tidyverse)
+library(car)
+library(pscl)
+library(gt)
+library(broom)
+library(MASS)
+
+measles_final <- read_csv(here::here("data", "measles_final.csv"))
+```
+
+```{r}
+measles_final <- measles_final |>
+  mutate(Region = dplyr::recode(Region,
+    "AFRO" = "Africa",
+    "AMRO" = "Americas",
+    "EMRO" = "Eastern Mediterranean",
+    "EURO" = "Europe",
+    "SEARO" = "South East Asia",
+    "WPRO" = "Western Pacific"))
+
+write.csv(measles_final, file = "measles_df.csv", row.names = FALSE)
+```
+
+## Visualizations
+
+### Average MCV1 Coverage
+
+```{r}
+#| warning: false
+
+# grab label data
+label_data <- measles_final |>
+  group_by(Region, Year) |>
+  summarise(mean_coverage = mean(`MCV1 Coverage`, na.rm = TRUE),
+            .groups = "drop") |>
+  drop_na() |>
+  group_by(Region) |>
+  slice_max(Year) |>
+  arrange(mean_coverage)
+
+# make plot
+mcv1_plot <- measles_final |>
+  group_by(Region, Year) |>
+  summarise(mean_coverage = mean(`MCV1 Coverage`, na.rm = TRUE), 
+            .groups = "drop") |>
+  
+  ggplot(aes(x = Year, 
+             y = mean_coverage, 
+             color = Region)) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  
+  # labels
+  labs(title = "Average MCV1 Coverage for 1 Year Olds Across Time and Region",
+       subtitle = "Source: WHO",
+       y = "",
+       x = "Year",
+       alt = paste("The average measles vaccine coverage is substantially lower for countries in Africa than other regions. We also see a dip in coverage globally around the start of the Covid pandemic.")) +
+  
+  # unique colors
+  scale_color_manual(values = c("Africa" = "#d35e7f",
+                                  "Americas" = "#9fc7b9",
+                                  "Eastern Mediterranean" = "#a999eb",
+                                  "Europe" = "#9bcdef",
+                                  "South East Asia" = "#ff9d60",
+                                  "Western Pacific" = "#d4a9ce")) +
+  scale_fill_manual(values = c("Africa" = "#d35e7f",
+                                  "Americas" = "#9fc7b9",
+                                  "Eastern Mediterranean" = "#a999eb",
+                                  "Europe" = "#9bcdef",
+                                  "South East Asia" = "#ff9d60",
+                                  "Western Pacific" = "#d4a9ce")) +
+  
+  scale_y_continuous(labels = \(x) paste0(x, "%")) +
+  
+  # edit graph  
+  theme_bw() +
+  theme(panel.grid.minor = element_blank(),
+        plot.title = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "bold"),
+        legend.title = element_text(face = "bold"),
+        axis.title = element_text(face = "bold"),
+        legend.position = "none") +
+  
+  # move labels
+  geom_label_repel(data = label_data,
+                  aes(x = Year, y = mean_coverage, 
+                      label = Region, fill = Region),
+                      inherit.aes = FALSE,
+                      nudge_x = 5,
+                      direction = "y",
+                      hjust = 0,
+                      segment.color = NA) +
+  
+  # expand grid
+  expand_limits(x = max(label_data$Year) + 1)
+
+mcv1_plot
+get_alt_text(mcv1_plot)
+```
+
+### Measles Cases Heat Map
+
+```{r}
+measles_heatmap <- measles_final |>
+  group_by(Region, Year) |>
+  summarise(mean_cases = mean(`Total Measles per Million`, na.rm = TRUE),
+            .groups = "drop") |>
+  
+  # compute log(1+x) since we 0s
+  ggplot(aes(x = Year,
+             y = Region,
+             fill = log1p(mean_cases))) + 
+  geom_tile(color = "white") +
+  
+  # non-default colors
+  scale_fill_viridis_c(option = "C") + guides(fill = guide_colorbar(direction = "horizontal")) +
+  
+  # non-default theme
+  theme_classic() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        axis.title = element_text(size = 12),
+        legend.position = "top") +
+  
+  # labels and alt text
+  labs(title = "Average Measles Cases per Million by Region and Year",
+       x = "Year",
+       y = "",
+       fill = "Log (Measles Cases Per Million +1)",
+       alt = paste("The AMRO region does not have data for 2012 and 2013. The heatmap indicates that there was a measles outbreak from 2014-2016 in the WPRO region. AFRO seems to have relatively consistent measles cases over time, with a spike in 2019.")) +
+  scale_x_continuous(breaks = seq(min(measles_final$Year),
+                                  max(measles_final$Year),
+                                  by = 2))
+
+measles_heatmap
+get_alt_text(measles_heatmap)
+```
+
+## Statistical Model
+
+Since Total Measles Cases can be modeled as count data, we first implemented a null Poisson generalized linear regression model. We aimed to maximize negative log-likelihood through the iterative addition of year-level predictor variables. While initially including population density, primary religion, nominal gdp per capita, region, year, and measles vaccine coverage as our predictors, we found that religion and region were highly multicollinear according to their variance inflation factor, meaning most of the variability in total measles cases from religion could be explained by the region. Our final model included population density, nominal gdp per capita, region, year, and MCV1 coverage, and used a negative binomial model rather than Poisson due to detected overdispersion.
+
+### Candidate Models
+
+```{r}
+# scaling and centering
+model_data <- measles_final |>
+  mutate(cPopDensity = scale(`Density`, scale = F),
+         cNomGDP = scale(`Nominal GDP per Capita`, scale = F),
+         cYear = scale(Year, scale = F),
+         cMCV1 = scale(`MCV1 Coverage`, scale = F))
+```
+
+```{r}
+#| warning: false
+#| output: false
+
+# null model
+m0 <- glm(`Total Measles` ~ 1, 
+          family = poisson(link = "log"), 
+          data = model_data)
+
+# model 1
+m1 <- glm(`Total Measles` ~ cPopDensity + `Primary Religion` + 
+            cNomGDP + Region + cYear + cMCV1, 
+          family = poisson(link = "log"), 
+          data = model_data)
+
+# model 2
+m2 <- glm(`Total Measles` ~ cPopDensity + Region + cYear + cMCV1, 
+          family = poisson(link = "log"), 
+          data = model_data)
+
+# model 3
+m3 <- zeroinfl(`Total Measles` ~ cPopDensity + Region + cMCV1, 
+               dist = "poisson", 
+               data = model_data)
+
+# model 4
+m4 <- glm(`Total Measles` ~ cPopDensity + cNomGDP + Region + 
+          cYear + cMCV1, 
+          family = poisson(link = "log"), 
+          data = model_data)
+
+# model 5
+m5 <- glm.nb(`Total Measles` ~ cPopDensity + cNomGDP + Region + 
+               cYear + cMCV1, 
+             data = model_data)
+odTest(m5)
+```
+
+### Candidate Summaries
+
+```{r}
+# summaries
+# null model
+tidy(m0) |>
+  gt()
+
+# model 2
+tidy(m1) |>
+  gt()
+
+# model 2
+tidy(m2) |>
+  gt()
+
+# model 3 (no tidy() method for zero infl models)
+summary(m3) 
+
+# model 4
+tidy(m4) |>
+  gt()
+
+# model 5
+tidy(m5) |>
+  gt()
+```
+
+### Candidate Log Likelihoods
+
+```{r}
+# model 1
+logLik(m1)
+
+# model 2
+logLik(m2)
+
+# model 3
+logLik(m3)
+
+# model 4
+logLik(m4)
+
+# model 5
+logLik(m5)
+```
+
+### Candidate VIFs
+
+```{r}
+# model 1
+vif(m1)
+
+# model 2
+vif(m2)
+
+# model 4
+vif(m4)
+```
+
+### Final Model
+
+Based on the results of model fitting, we found that Southeast Asia has the greatest mean number of measles cases annually after adjusting for population density, nominal GDP per capita, year, and MCV1 coverage. The Americas have the lowest mean number of measles cases annually after adjusting for population density, nominal GDP per capita, year, and MCV1 coverage. Population density has a negative effect on mean measles cases after adjusting for the other variables, while nominal GDP per capita has a small negative effect on mean measles cases after adjusting for the other variables. Increases in year are associated with an increase in the mean number of measles cases after adjusting for the other variables. MCV1 coverage, or vaccination rate, has the largest negative effect on mean measles cases after adjusting for the other variables.
+
+```{r}
+tidy(m5) |>
+  mutate(term = str_replace_all(term, c("Region" = "",
+                                        "cPopDensity" = "Pop. Density*",
+                                        "cNomGDP" = "Nominal GDP per Capita*",
+                                        "cYear" = "Year*",
+                                        "cMCV1" = "MCV1 Coverage*",
+                                        "\\(|\\)" = ""))) |>
+  rename("Model Term" = "term",
+         "Estimate" = "estimate",
+         "Std. Error" = "std.error",
+         "Z-Statistic" = "statistic",
+         "p-value" = "p.value") |>
+  gt() |>
+  fmt_number(decimals = 3) |>
+  tab_header(
+    title = md("**NB GLM Coefficients**")) |>
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())) |>
+  tab_caption("Table 1: Negative Binomial regression results. Response measures total measles cases across a region in a given year. Baseline region is Africa.") |>
+  tab_footnote("*Quantitative variables are centered for interpretability")
+```

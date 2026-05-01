@@ -1,0 +1,33 @@
+---
+title: "Project-1"
+author: "Jasmine Cabrera"
+format: html
+editor: visual
+---
+
+## Data
+
+```{r}
+#| warning: false
+# load packages
+library(tidytuesdayR)
+
+# load data
+cases_month <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-06-24/cases_month.csv')
+cases_year <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-06-24/cases_year.csv')
+
+head(cases_month)
+```
+
+```{r}
+# checking NA
+sum(apply(is.na(cases_month), 1, any))
+colSums(is.na(cases_month))
+
+# measles
+cases_month[is.na(cases_month$rubella_clinical), ]
+# rubella
+cases_month[is.na(cases_month$rubella_clinical), ]
+
+unique(cases_month$year)
+```
