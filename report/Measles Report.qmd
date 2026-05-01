@@ -1,6 +1,6 @@
 ---
 title: "Measles Report"
-author: "Ruben Jimenez"
+author: "Ruben Jimenez, Jasmine Cabrera, Cameron An"
 format: html
 editor: visual
 theme: united
