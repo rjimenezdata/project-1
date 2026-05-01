@@ -27,7 +27,9 @@ library(MASS)
 library(scales)
 library(htmltools)
 
-measles <- read_csv("report/measles_df.csv")
+measles <- read_csv(here::here("report", "measles_df_clean.csv"))
+measles <- measles |>
+  rename(`Nominal GDP per Capita` = `Nominal GDP`)
 ```
 
 
@@ -257,18 +259,18 @@ mcv1_plot
 #| title: Correlations Between Demographic Variables
 measles |>
   filter(!is.na(`MCV1 Coverage`),
-         !is.na(`GDP Growth (%)`),
+         !is.na(`Nominal GDP per Capita`),
          !is.na(`Total Measles per Million`)) |>
   split(~ Region) |>
   map_dfr(function(x) {
     tibble(Region = first(x$Region),
            `MCV1 vs GDP` = cor(x$`MCV1 Coverage`,
-                                     x$`GDP Growth (%)`,
+                                     x$`Nominal GDP per Capita`,
                                      use = "complete.obs"),
            `MCV1 vs Measles` = cor(x$`MCV1 Coverage`,
-                                         x$`Total Measles per Million`,
+                                         x$`Nominal GDP per Capita`,
                                          use = "complete.obs"),
-           `GDP vs Measles` = cor(x$`GDP Growth (%)`,
+           `GDP vs Measles` = cor(x$`Nominal GDP per Capita`,
                                         x$`Total Measles per Million`,
                                         use = "complete.obs"))}) |>
   arrange(Region) |>
@@ -353,8 +355,10 @@ mcv_gdp <- function(region = NULL, country = NULL, year = NULL){
       dplyr::filter(Country == country, Year == year) |>
       dplyr::select(Country, `Nominal GDP per Capita`, 
                     `MCV1 Coverage`, `Total Measles per Million`) |>
+        arrange(desc(`Total Measles per Million`)) |>
+        rename("Nominal GDP per Capita ($ USD)" = `Nominal GDP per Capita`) |>
       gt() |>
-      fmt_number(columns = c(`Nominal GDP per Capita`), decimals = 3) |>
+      fmt_number(columns = c(`Nominal GDP per Capita ($ USD)`), decimals = 3) |>
       fmt(columns = `MCV1 Coverage`,
           fns = function(x) paste0(x, "%")) |>
       tab_style(style = cell_text(weight = "bold"),
@@ -367,8 +371,10 @@ mcv_gdp <- function(region = NULL, country = NULL, year = NULL){
       dplyr::filter(Region == region, Year == year) |>
       dplyr::select(Country, `Nominal GDP per Capita`, 
                     `MCV1 Coverage`, `Total Measles per Million`) |>
+        arrange(desc(`Total Measles per Million`)) |>
+        rename("Nominal GDP per Capita ($ USD)" = `Nominal GDP per Capita`) |>
       gt() |>
-      fmt_number(columns = c(`Nominal GDP per Capita`), decimals = 3) |>
+      fmt_number(columns = c(`Nominal GDP per Capita ($ USD)`), decimals = 3) |>
       fmt(columns = `MCV1 Coverage`,
           fns = function(x) paste0(x, "%")) |>
       tab_style(style = cell_text(weight = "bold"),
@@ -381,8 +387,10 @@ mcv_gdp <- function(region = NULL, country = NULL, year = NULL){
       dplyr::filter(Country == country) |>
       dplyr::select(Country, Year, `Nominal GDP per Capita`, 
                     `MCV1 Coverage`, `Total Measles per Million`) |>
+        arrange(desc(`Total Measles per Million`)) |>
+        rename("Nominal GDP per Capita ($ USD)" = `Nominal GDP per Capita`) |>
       gt() |>
-      fmt_number(columns = c(`Nominal GDP per Capita`), decimals = 3) |>
+      fmt_number(columns = c(`Nominal GDP per Capita ($ USD)`), decimals = 3) |>
       fmt(columns = `MCV1 Coverage`,
           fns = function(x) paste0(x, "%")) |>
       tab_style(style = cell_text(weight = "bold"),
