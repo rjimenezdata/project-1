@@ -1,28 +1,30 @@
 ---
 title: "Measles Report"
-author: "Jasmine Cabrera"
+author: "Ruben Jimenez"
 format: html
 editor: visual
 theme: united
 embed-resources: true
 ---
 
-```{r}
+```{r setup}
 #| label: libraries
 #| code-fold: true
 #| message: false
 
-# load libraries
 library(tidyverse)
 library(ggridges)
 library(ggrepel)
-library(tidyverse)
 library(car)
 library(pscl)
 library(gt)
 library(broom)
-library(MASS)
 library(scales)
+library(htmltools)
+library(MASS)
+library(tidyverse)
+library(jsonlite)
+library(tidyjson)
 ```
 
 ## Motivation
@@ -61,7 +63,7 @@ cases_year <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience
 
 # create measles data
 measles_month <- cases_month |>
-  select(-c(rubella_clinical, rubella_epi_linked, 
+  dplyr::select(-c(rubella_clinical, rubella_epi_linked, 
             rubella_lab_confirmed, rubella_total)) |>
   rename("Region" = region,
          "Country" = country, 
@@ -76,7 +78,7 @@ measles_month <- cases_month |>
          "Discarded" = discarded) |>
   mutate(Date = my(str_c(Month, "-", Year)),
          ASCII = stri_trans_general(Country, "Latin-ASCII")) |>
-  select(-c(Year, Month)) |>
+  dplyr::select(-c(Year, Month)) |>
   relocate(Date)
 
 # create measles data for years
@@ -100,6 +102,8 @@ measles_year <- cases_year |>
          "Total Discarded" = discarded_cases,
          "Total Discarded per Million" = discarded_non_measles_rubella_cases_per_100000_total_population) |>
   slice(-1)
+
+measles_year |> filter(Country == "Mongolia", Year == 2016)
 ```
 
 ### **REST Countries API Data**
@@ -186,36 +190,93 @@ world_df |>
 
 **Data Description:**
 
-The GDP data for each country were accessed via API Ninjas, a third-party API provider. As of right now, the documentation does not explicitly state the original data source or the methods used for data collection. The data covers 188 countries, with each country possessing multiple years of GDP data. Therefore, an observational unit is represented by a country-year pair. The dataset includes historical and recent GDP values up to 2025. However, we decided to focus only on the years 2012 and later to align with the range of the WHO measles data. 
-
-GDP represents an important indicator of a country’s socioeconomic status and could explain variation in measles incidence across countries. Higher-GDP countries generally have higher access to healthcare resources, including vaccines, while lower-GDP countries face barriers to providing effective healthcare for their citizens. By incorporating this data, we can examine how GDP impacts measles incidence and identify regions that are most impacted by GDP levels.
-
 **Source:**
-
-[API Ninjas](https://api-ninjas.com/api/gdp)
 
 **Data:**
 
 ```{r}
 #| code-fold: true
 #| eval: false
-# base url for GDP API
-base_url <- "https://api.api-ninjas.com/v1/gdp?country="
+url <- "https://en.wikipedia.org/wiki/List_of_countries_by_past_and_projected_GDP_(nominal)"
 
-# function to get GDP info by country code
-gdp_info <- function(country_code) {
-  url <- str_c(base_url, country_code, 
-               #"&year=", as.character(year),
-               "&X-Api-Key=lJsfvISfAdepHh5moYOXLLFjSKBr5MYFQ1E9V7YN")
-  
-  rawToChar(GET(url)$content) |>
-    fromJSON()}
+# read in page
+page <- read_html(url)
 
-# gdp
-gdp_data <- map_dfr(
-  unique(measles_year$`Country Code`),
-  gdp_info) |>
-  filter(year > 2011)
+tables <- page |>
+  html_elements("table")
+
+# 2010s table
+table5 <- tables[[5]] |>
+  html_table(fill = TRUE)
+
+# 2020s table
+table6 <- tables[[6]] |>
+  html_table(fill = TRUE)
+
+# keep important years
+table5 <- table5 |>
+  dplyr::select(-c(`2010`, `2011`))
+
+table6 <- table6 |>
+  dplyr::select(c(`Country / territory`,`2020`, `2021`, `2022`, `2023`, `2024`))
+
+# join data
+nominal_gdp <- table5 |>
+  full_join(table6, by = "Country / territory")
+
+# rename cols
+nominal_gdp <- nominal_gdp |>
+  rename(`Country` = `Country / territory`)
+```
+
+```{r}
+#| code-fold: true
+#| eval: false
+# scrape country codes
+codeurl <- "https://en.wikipedia.org/wiki/Comparison_of_alphabetic_country_codes"
+
+# read in page
+page1 <- read_html(codeurl)
+
+tables <- page1 |>
+  html_elements("table")
+
+# code table
+table1 <- tables[[1]] |>
+  html_table(fill = TRUE)
+
+codes <- table1 |>
+  dplyr::select(c(Country, ISO))
+
+# join code and nominal gdp data
+nomgdp_code <- nominal_gdp |>
+  left_join(codes, join_by("Country"))
+
+# countries without iso code
+countries_missing_iso <- nomgdp_code$Country[is.na(nomgdp_code$ISO)]
+
+# iso codes
+missing_iso <- data.frame(
+  Country = c(
+    "Bahamas", "China", "Democratic Republic of the Congo",
+    "Republic of the Congo", "Ivory Coast", "Gambia",
+    "Hong Kong", "Ireland", "South Korea",
+    "Federated States of Micronesia", "North Macedonia",
+    "Russia", "Samoa", "Taiwan", "Timor-Leste", "United Kingdom"),
+  ISO_new = c(
+    "BHS", "CHN", "COD",
+    "COG", "CIV", "GMB",
+    "HKG", "IRL", "KOR",
+    "FSM", "MKD",
+    "RUS", "WSM", "TWN", "TLS", "GBR"),
+  stringsAsFactors = FALSE)
+
+# add missing iso
+nomgdp_clean <- nomgdp_code |>
+  left_join(missing_iso, by = "Country") |>
+  mutate(ISO = if_else(is.na(ISO), ISO_new, ISO),
+         ISO = if_else(Country == "Kosovo", "XKX", ISO)) |>
+  dplyr::select(-ISO_new) 
 ```
 
 ### **Measles Vaccine (1st Dose) Immunization**
@@ -256,7 +317,10 @@ Using the various datasets above, we joined them using the ISO3/Country Code. Th
 ```{r}
 #| message: false
 #| code-fold: true
-measles <- read_csv(here::here("report", "measles_df.csv"))
+measles <- read_csv(here::here("report", "measles_df_clean.csv"))
+
+measles <- measles |>
+  rename(`Nominal GDP per Capita` = `Nominal GDP`)
 
 head(measles) |>
   gt() |>
@@ -264,8 +328,7 @@ head(measles) |>
             locations = cells_column_labels()) |>
   
   # commas
-  fmt_number(columns = c(`Total Pop.`, Area, `Primary Religion Pop`, 
-                         `Nominal GDP`, `Nominal GDP per Capita`, `GDP per capita PPP`),
+  fmt_number(columns = c(`Total Pop.`, Area, `Primary Religion Pop`, `Nominal GDP per Capita`),
              decimals = 0,
              use_seps = TRUE) |>
   
@@ -277,7 +340,7 @@ head(measles) |>
 
 ## Data Summaries & Visualizations
 
-### Exploring Research Question 1: 
+### Exploring Research Question 1:
 
 #### **Table 1:** Annual Measles Cases Rates per Million
 
@@ -321,7 +384,7 @@ annual_measles_tbl <- measles |>
 browsable(div(style = "max-height:500px; overflow-y:auto;", annual_measles_tbl))
 ```
 
-This table shows that in 2016, Western Pacific countries had the most average cases per million of any region. This follows for 2015 and 2014 as well. Western Pacific countries averaged almost 384 cases per million in 2016. The average country-level population these years stayed close to 75 million people, which suggests that population size may have an impact on infection rate.
+Table 1 shows that in 2016, Western Pacific countries had the most average cases per million of any region. This follows for 2015 and 2014 as well. Western Pacific countries averaged almost 384 cases per million in 2016. The average country-level population these years stayed close to 75 million people, which suggests that population size may have an impact on infection rate.
 
 #### **Figure 1:** Average Measles Cases per Million by Region and Year
 
@@ -363,7 +426,7 @@ measles_heatmap <- measles |>
 measles_heatmap
 ```
 
-In general, Europe, Eastern Mediterranean, and Africa seem to have the highest consistent number of cases across all years. There does not appear to be a consistent pattern of increase or decrease across years, but periods of elevated cases are scattered across different years and regions. This indicates the presence of scattered outbreaks rather than consistent patterns. Europe and the Eastern Mediterranean have experienced an increase in cases over the past three years, producing some of their largest log(mean cases) during this period. There is also a spike in cases throughout 2018 and 2019, which are most pronounced in Europe, Western Pacific, and Africa. The Americas have the lowest number of cases relative to all other regions, which could stem from socioeconomic factors that will be addressed as part of our second research question.
+Figure 1 shows that in general, Europe, Eastern Mediterranean, and Africa seem to have the highest consistent number of cases across all years. There does not appear to be a consistent pattern of increase or decrease across years, but periods of elevated cases are scattered across different years and regions. This indicates the presence of scattered outbreaks rather than consistent patterns. Europe and the Eastern Mediterranean have experienced an increase in cases over the past three years, producing some of their largest log(mean cases) during this period. There is also a spike in cases throughout 2018 and 2019, which are most pronounced in Europe, Western Pacific, and Africa. The Americas have the lowest number of cases relative to all other regions, which could stem from socioeconomic factors that will be addressed as part of our second research question.
 
 We also note that the Western Pacific region experienced a measles outbreak starting in 2014 and lasting until 2016. This outbreak yielded the highest number of measles cases over the 2012-2025 period across all regions, which can be confirmed by the previous table. Using this information, we decided to further investigate the year-over-year change in measles cases for the Western Pacific region to quantify trends in outbreak severity.
 
@@ -445,7 +508,7 @@ yoy_change <- function(df, region_name) {
 yoy_change(measles, "Western Pacific")
 ```
 
-Between 2014 and 2016, the mean number of measles in the Western Pacific countries increased at an alarming rate. The region in 2014 saw an increase of almost 256 average cases per million. 
+Table 2 shows that between 2014 and 2016, the mean number of measles in the Western Pacific countries increased at an alarming rate. The region in 2014 saw an increase of almost 256 average cases per million. 
 
 #### **Figure 2:** Average Measles Infection Rate Across Time and Region
 
@@ -517,11 +580,11 @@ ggplot(aes(x = Year,
        y = "")
 ```
 
-This plot shows substantial variation in measles rates both between regions and over time. In general, Europe, the Eastern Mediterranean, and Africa tend to have the highest measles rates on a consistent year-to-year basis, as they are frequently among the top three regions beginning in 2017, although this pattern is not consistent in every year. The Western Pacific and Africa tend to experience the most volatile measles rates, as evidenced by the large spikes in cases. The Western Pacific region experienced an extreme measles outbreak from 2014 to 2016, along with a smaller spike in cases during 2019. Africa also experienced a large spike in cases during 2019, indicating an outbreak during that period. These large fluctuations suggest that the Western Pacific and Africa regions are more prone to large measles outbreaks rather than gradual trends over time. 
+Figure 2 shows substantial variation in measles rates both between regions and over time. In general, Europe, the Eastern Mediterranean, and Africa tend to have the highest measles rates on a consistent year-to-year basis, as they are frequently among the top three regions beginning in 2017, although this pattern is not consistent in every year. The Western Pacific and Africa tend to experience the most volatile measles rates, as evidenced by the large spikes in cases. The Western Pacific region experienced an extreme measles outbreak from 2014 to 2016, along with a smaller spike in cases during 2019. Africa also experienced a large spike in cases during 2019, indicating an outbreak during that period. These large fluctuations suggest that the Western Pacific and Africa regions are more prone to large measles outbreaks rather than gradual trends over time. 
 
 In contrast, the Americas and South East Asia consistently maintain low measles rates, potentially indicating stronger prevention procedures or more stable vaccination coverage. Europe and the Eastern Mediterranean have experienced the most recent spikes in cases and possess the highest rates as of 2025. 
 
-### Exploring Research Question 2: 
+### Exploring Research Question 2:
 
 #### **Figure 3:** Average MCV1 Coverage for One-Year Olds Across Time and Region
 
@@ -600,7 +663,7 @@ mcv1_plot <- measles |>
 mcv1_plot
 ```
 
-The dip in MCV1 coverage after 2019 across all regions could be a result of the COVID-19 pandemic, a period in which healthcare resources were reallocated to pandemic response rather than measles prevention. This reallocation of resources might explain some of the increase in cases from 2022 and later, as the low MCV1 coverage is associated with a “delayed” impact on the increased measles cases in recent years.
+The dip in MCV1 coverage after 2019 across all regions seen in Figure 3 could be a result of the COVID-19 pandemic, a period in which healthcare resources were reallocated to pandemic response rather than measles prevention. This reallocation of resources might explain some of the increase in cases from 2022 and later, as the low MCV1 coverage is associated with a “delayed” impact on the increased measles cases in recent years.
 
 The Africa region consistently has the lowest MCV1 coverage compared to other regions. This difference appears substantial in the plot above and could explain variation in measles rates across regions. However, we do not see a very large difference in measles rates for Africa compared to the Europe and Eastern Mediterranean regions, as shown through the heatmap provided earlier. 
 
@@ -613,18 +676,18 @@ Together, these results suggest that MCV1 coverage could represent an important 
 #| code-fold: true
 measles |>
   filter(!is.na(`MCV1 Coverage`),
-         !is.na(`GDP Growth (%)`),
+         !is.na(`Nominal GDP per Capita`),
          !is.na(`Total Measles per Million`)) |>
   split(~ Region) |>
   map_dfr(function(x) {
     tibble(Region = first(x$Region),
            `MCV1 vs GDP` = cor(x$`MCV1 Coverage`,
-                                     x$`GDP Growth (%)`,
+                                     x$`Nominal GDP per Capita`,
                                      use = "complete.obs"),
            `MCV1 vs Measles` = cor(x$`MCV1 Coverage`,
                                          x$`Total Measles per Million`,
                                          use = "complete.obs"),
-           `GDP vs Measles` = cor(x$`GDP Growth (%)`,
+           `GDP vs Measles` = cor(x$`Nominal GDP per Capita`,
                                         x$`Total Measles per Million`,
                                         use = "complete.obs"))}) |>
   arrange(Region) |>
@@ -640,7 +703,7 @@ measles |>
     use_seps = TRUE)
 ```
 
-Regions generally exhibit a positive correlation between nominal GDP and MCV1 coverage, although the strength of this relationship varies. The Eastern Mediterranean region possesses the strongest correlation, suggesting that countries in the Eastern Mediterranean may devote more of their economic resources to vaccine coverage compared to other regions. In contrast, Africa possesses the lowest correlation value, indicating no linear relationship between nominal GDP and MCV1 coverage. This suggests that countries with larger nominal GDPs in Africa do not necessarily achieve proportionally higher vaccination coverage compared to lower-GDP countries. Therefore, economic resources alone are not sufficient to improve vaccination rates in Africa, so other factors should be considered.
+Table 3 shows that regions generally exhibit a positive correlation between nominal GDP and MCV1 coverage, although the strength of this relationship varies. The Eastern Mediterranean region possesses the strongest correlation, suggesting that countries in the Eastern Mediterranean may devote more of their economic resources to vaccine coverage compared to other regions. In contrast, Africa possesses the lowest correlation value, indicating no linear relationship between nominal GDP and MCV1 coverage. This suggests that countries with larger nominal GDPs in Africa do not necessarily achieve proportionally higher vaccination coverage compared to lower-GDP countries. Therefore, economic resources alone are not sufficient to improve vaccination rates in Africa, so other factors should be considered.
 
 #### **Figure 4:** MCV1 Coverage vs. Log Nominal GDP per Capita Across Regions
 
@@ -671,7 +734,7 @@ measles |>
   theme(legend.position = "none") 
 ```
 
-We compared the first dose measles-containing vaccine (MCV1) coverage across regions against the log of nominal GDP per capita. In Africa, countries with varying GDPs exhibit a wide range of MCV1 coverage, showing no clear relationship between GDP and vaccination rate. In the Americas, the GDP range is narrower, and vaccination rates generally remain high. The Eastern Mediterranean region shows a clear pattern, with higher GDP countries tending to have higher MCV1 coverage. In Europe and South East Asia, MCV1 rates remain consistently high regardless of GDP, with South East Asia showing rates of at least 70% for most countries, aside from one outlier.
+In Figure 4 we compare the first dose measles-containing vaccine (MCV1) coverage across regions against the log of nominal GDP per capita. In Africa, countries with varying GDPs exhibit a wide range of MCV1 coverage, showing no clear relationship between GDP and vaccination rate. In the Americas, the GDP range is narrower, and vaccination rates generally remain high. The Eastern Mediterranean region shows a clear pattern, with higher GDP countries tending to have higher MCV1 coverage. In Europe and South East Asia, MCV1 rates remain consistently high regardless of GDP, with South East Asia showing rates of at least 70% for most countries, aside from one outlier.
 
 #### **Table 4:** Nominal GDP per Capita and MCV1 Coverage for the Western Pacific Region
 
@@ -721,8 +784,10 @@ mcv_gdp <- function(region = NULL, country = NULL, year = NULL){
       dplyr::filter(Country == country, Year == year) |>
       dplyr::select(Country, `Nominal GDP per Capita`, 
                     `MCV1 Coverage`, `Total Measles per Million`) |>
+        arrange(desc(`Total Measles per Million`)) |>
+        rename("Nominal GDP per Capita ($ USD)" = `Nominal GDP per Capita`) |>
       gt() |>
-      fmt_number(columns = c(`Nominal GDP per Capita`), decimals = 3) |>
+      fmt_number(columns = c(`Nominal GDP per Capita ($ USD)`), decimals = 3) |>
       fmt(columns = `MCV1 Coverage`,
           fns = function(x) paste0(x, "%")) |>
       tab_header(title = md(paste("**Nominal GDP per Capita and MCV1 Coverage in **", year, "** For **", country))) |>
@@ -736,8 +801,10 @@ mcv_gdp <- function(region = NULL, country = NULL, year = NULL){
       dplyr::filter(Region == region, Year == year) |>
       dplyr::select(Country, `Nominal GDP per Capita`, 
                     `MCV1 Coverage`, `Total Measles per Million`) |>
+        arrange(desc(`Total Measles per Million`)) |>
+        rename("Nominal GDP per Capita ($ USD)" = `Nominal GDP per Capita`) |>
       gt() |>
-      fmt_number(columns = c(`Nominal GDP per Capita`), decimals = 3) |>
+      fmt_number(columns = c(`Nominal GDP per Capita ($ USD)`), decimals = 3) |>
       fmt(columns = `MCV1 Coverage`,
           fns = function(x) paste0(x, "%")) |>
       tab_header(title = md(glue::glue("**Nominal GDP per Capita and MCV1 Coverage in {year} for the  {region} Region**"))) |>
@@ -751,13 +818,16 @@ mcv_gdp <- function(region = NULL, country = NULL, year = NULL){
       dplyr::filter(Country == country) |>
       dplyr::select(Country, Year, `Nominal GDP per Capita`, 
                     `MCV1 Coverage`, `Total Measles per Million`) |>
+        arrange(desc(`Total Measles per Million`)) |>
+        rename("Nominal GDP per Capita ($ USD)" = `Nominal GDP per Capita`) |>
       gt() |>
-      fmt_number(columns = c(`Nominal GDP per Capita`), decimals = 3) |>
+      fmt_number(columns = c(`Nominal GDP per Capita ($ USD)`), decimals = 3) |>
       fmt(columns = `MCV1 Coverage`,
           fns = function(x) paste0(x, "%")) |>
       tab_header(title = md(glue::glue("**Nominal GDP per Capita and MCV1 Coverage for {country} Across Time**"))) |>
       tab_style(style = cell_text(weight = "bold"),
-                locations = cells_column_labels(everything()))))
+                locations = cells_column_labels(everything()))) |>
+      tab_footnote(footnote = "Scores are out of 100."))
     
   } else {
     stop("Invalid combination of inputs. Provide either country (+ optional year) or region + year.")}}
@@ -767,6 +837,8 @@ mcv_gdp <- function(region = NULL, country = NULL, year = NULL){
 #| code-fold: true
 mcv_gdp(region = "western pacific", year = 2016)
 ```
+
+We see in Table 4 that Mongolia had the most severe outbreak in recent history at close to 9500 cases per million in 2016. However, this population was 99% vaccinated with the first round of MCV. We continue to see relatively high rates in Malaysia, Singapore, and New Zealand despite MCV vaccination rate being above 90%.
 
 ## Statistical Model
 
