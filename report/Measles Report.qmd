@@ -25,6 +25,9 @@ library(MASS)
 library(tidyverse)
 library(jsonlite)
 library(tidyjson)
+library(lme4)
+library(glmmTMB)
+library(car)
 ```
 
 ## Motivation
@@ -898,6 +901,8 @@ m5 <- glm.nb(`Total Measles` ~ cPopDensity + cNomGDP + Region +
                cYear + cMCV1, 
              data = model_data)
 
+summary(m5)
+
 # overdispersion detected
 odTest(m5)
 ```
@@ -1010,6 +1015,22 @@ final_model |>
   
   # add footnote
   tab_footnote("*Quantitative variables are centered for interpretability")
+```
+
+New model fitting
+
+```{r}
+newm1 <- glmer.nb(`Total Measles` ~ (1 | Country) + cPopDensity + cNomGDP + cMCV1 + cYear + Region, data = model_data |>
+                    drop_na(`Total Measles`))
+
+summary(newm1)
+Anova(newm1)
+
+newm2 <- glmmTMB(`Total Measles` ~  cNomGDP + (1 | Region) + cMCV1,
+             data = model_data)
+
+summary(newm2)
+# population density, year not significant
 ```
 
 **Interpretation:**
