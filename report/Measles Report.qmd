@@ -28,6 +28,7 @@ library(tidyjson)
 library(lme4)
 library(glmmTMB)
 library(car)
+library(broom.mixed)
 ```
 
 ## Motivation
@@ -851,7 +852,7 @@ Since the Total Number of Measles Cases can be modeled as count data, we first i
 
 While initially including population density, primary religion, nominal gdp per capita, region, year, as well as the measles vaccine coverage as our predictors, we found that religion and region were highly multicollinear according to their variance inflation factor, meaning most of the variability in total measles cases from religion could be explained by the region. 
 
-Our final model included population density, nominal gdp per capita, region, year, and measles-containing vaccine first dose (MCV1) coverage, and implemented a Negative Binomial model rather than Poisson due to detected overdispersion.
+Our final model included population density, region, year, and measles-containing vaccine first dose (MCV1) coverage, and implemented a Zero-Inflated Negative Binomial model rather than Poisson due to detected overdispersion.
 
 ```{r}
 #| code-fold: true
@@ -974,39 +975,91 @@ vif(m2)
 vif(m4)
 ```
 
-#### **Table 5:** Negative Binomial Model Summary Table
+New model fitting
 
 ```{r}
-#| label: final model
 #| code-fold: true
+#| message: false
+#| eval: false
+newm1 <- glmer(`Total Measles` ~ (1 | Country) + cPopDensity + cMCV1 + cYear*Region, data = model_data |>
+                    drop_na(`Total Measles`),
+               family = poisson(link = "log"))
 
-# final model
-final_model <- glm.nb(`Total Measles` ~ cPopDensity + cNomGDP + 
-                      Region + cYear + cMCV1, 
-                      data = model_data)
+summary(newm1)
+Anova(newm1)
 
-final_model |>
-  tidy() |>
-  
-  # clean up values
+# BEST SO FAR
+newm2 <- glmmTMB(`Total Measles` ~ (1 | Country) + cPopDensity+ cMCV1+ cYear*Region, data = model_data |>
+                    drop_na(`Total Measles`), ziformula = ~ 1,
+                 family = nbinom2)
+
+
+
+summary(newm2)
+AIC(newm2)
+logLik(newm2)
+
+newm3 <- glmmTMB(`Total Measles` ~ (1 | Country) + cPopDensity+ cMCV1+ cYear*Region, data = model_data |>
+                    drop_na(`Total Measles`), ziformula = ~ cYear,
+                 family = nbinom2)
+
+summary(newm3)
+
+newm4 <- glmmTMB(`Total Measles` ~ (1 | Country) + (1 | cYear) + cPopDensity+ cMCV1+ Region, data = model_data |>
+                    drop_na(`Total Measles`), ziformula = ~ 1,
+                 family = nbinom2)
+summary(newm4)
+
+
+summary(newm5)
+
+newm6 <- glmmTMB(`Total Measles` ~ (1 | Country) + (1 | cYear) + (1 | Country:cYear) + cPopDensity+ cMCV1+ Region, data = model_data |>
+                    drop_na(`Total Measles`),
+                 family = nbinom2)
+summary(newm6)
+
+newm7 <- glmmTMB(`Total Measles` ~ (1 | Country) + (1 | cYear) + (1 | Country:cYear) + cPopDensity+ cMCV1+ Region, data = model_data |>
+                    drop_na(`Total Measles`), ziformula = ~ Region,
+                 family = nbinom2)
+
+summary(newm7)
+# population density, year not significant
+```
+
+#### **Table 5:** Zero-Inflated Negative Binomial GLM Predicting Measles Cases
+
+```{r}
+#| echo: false
+newm5 <- glmmTMB(`Total Measles` ~ (1 | Country) + (1 | cYear) + (1 | Country:cYear) + cPopDensity+ cMCV1+ Region, data = model_data |>
+                    drop_na(`Total Measles`), ziformula = ~ 1,
+                 family = nbinom2)
+newm5 |> tidy() |>
+  mutate(bh.adj = p.adjust(p.value, method = "BH")) |>
   mutate(term = str_replace_all(term, c("Region" = "",
                                         "cPopDensity" = "Pop. Density*",
-                                        "cNomGDP" = "Nominal GDP per Capita*",
-                                        "cYear" = "Year*",
                                         "cMCV1" = "MCV1 Coverage*",
-                                        "\\(|\\)" = ""))) |>
-  
+                                        "\\(|\\)" = "",
+                                        "sd__" = "")),
+         term = if_else(!is.na(group), group, term),
+         term = str_replace_all(term, c("cYear" = "Year*"))) |>
+  dplyr::select(-c(group, p.value)) |>
   # rename values
   rename("Model Term" = "term",
          "Estimate" = "estimate",
          "Std. Error" = "std.error",
          "Z-Statistic" = "statistic",
-         "p-value" = "p.value") |>
+         "BH Adj. p-value" = "bh.adj",
+         "Component" = "component",
+         "Effect Type" = "effect") |>
+  mutate(`Effect Type` = str_replace_all(`Effect Type`, c("fixed" = "Fixed",
+                                                          "ran_pars" = "Random Intercept")),
+         Component = str_replace_all(Component, c("cond" = "Conditional",
+                                                  "zi" = "Zero-Inflated"))) |>
   
   # format table
   gt() |>
   fmt_number(decimals = 3) |>
-  tab_header(title = md("**NB GLM Coefficients**")) |>
+  tab_header(title = md("**Zero-Inflated NB GLM Coefficients**")) |>
   tab_style(style = cell_text(weight = "bold"),
             locations = cells_column_labels(everything())) |>
   
@@ -1014,35 +1067,19 @@ final_model |>
   tab_caption("Table 5: Negative Binomial regression results. Response measures total measles cases across a region in a given year. Baseline region is Africa.") |>
   
   # add footnote
-  tab_footnote("*Quantitative variables are centered for interpretability")
-```
-
-New model fitting
-
-```{r}
-newm1 <- glmer.nb(`Total Measles` ~ (1 | Country) + cPopDensity + cNomGDP + cMCV1 + cYear + Region, data = model_data |>
-                    drop_na(`Total Measles`))
-
-summary(newm1)
-Anova(newm1)
-
-newm2 <- glmmTMB(`Total Measles` ~  cNomGDP + (1 | Region) + cMCV1,
-             data = model_data)
-
-summary(newm2)
-# population density, year not significant
+  tab_footnote("*Quantitative variables are centered for interpretability.")
 ```
 
 **Interpretation:**
 
 Based on the results of model fitting, we found that:
 
--   Southeast Asia has the greatest mean number of measles cases annually after adjusting for population density, nominal GDP per capita, year, and MCV1 coverage. 
+-   The Eastern Mediterranean region and South East Asia are affected by measles at rates indistinguishable from Africa's, which is the greatest annually after adjusting for population density, year, and MCV1 coverage. 
 
--   The Americas have the lowest mean number of measles cases annually after adjusting for population density, nominal GDP per capita, year, and MCV1 coverage. 
+-   The Americas have the lowest mean number of measles cases annually after adjusting for population density, year, and MCV1 coverage. 
 
--   Population density has a negative effect on mean measles cases after adjusting for the other variables, while nominal GDP per capita has a small negative effect on mean measles cases after adjusting for the other variables. 
+-   There's not enough evidence to conclude population density has an effect on mean measles cases after adjusting for the other variables. 
 
--   Increases in year are associated with an increase in the mean number of measles cases after adjusting for the other variables. 
+-   On average, there is a moderate to large amount of variability in the rate at which cases occur between years within each given country.
 
--   MCV1 coverage, or vaccination rate, has the largest negative effect on mean measles cases after adjusting for the other variables.
+-   MCV1 coverage, or vaccination rate, does not have a significant effect on measles rate after adjusting for region, year, population density, and their interactions. We believe that MCV1 coverage is highly correlated with region and year, and also that this is only the first vaccine of two which both are necessary to prevent disease.
